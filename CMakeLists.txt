@@ -5,6 +5,7 @@ project(
     VERSION 0.1.0
     LANGUAGES CXX)
 
+find_package(directxtk CONFIG REQUIRED)
 find_package(CommonLibSSE CONFIG REQUIRED)
 
 add_commonlibsse_plugin(
