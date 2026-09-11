@@ -4,5 +4,5 @@ namespace VoiceMap
 {
 	bool InstallLoadHook();
 	void Publish();
-	[[nodiscard]] RE::BSFixedString OriginalEditorID(RE::FormID a_npcID);
+	[[nodiscard]] RE::FormID OriginalVoiceTypeID(RE::FormID a_npcID);
 }

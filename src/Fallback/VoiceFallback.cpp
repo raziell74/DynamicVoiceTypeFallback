@@ -167,15 +167,20 @@ namespace VoiceFallback
 			return;
 		}
 
-		const auto original = VoiceMap::OriginalEditorID(npc->GetFormID());
-		const char* originalEdid = original.c_str();
-		if (!originalEdid || !*originalEdid) {
+		const auto originalID = VoiceMap::OriginalVoiceTypeID(npc->GetFormID());
+		if (!originalID) {
 			return;
 		}
 
 		const auto* currentVt = npc->GetObjectVoiceType();
-		const char* currentEdid = currentVt ? currentVt->GetFormEditorID() : nullptr;
-		if (!currentEdid || !*currentEdid || IeEquals(currentEdid, originalEdid)) {
+		if (!currentVt || currentVt->GetFormID() == originalID) {
+			return;
+		}
+
+		const auto* originalVt = RE::TESForm::LookupByID<RE::BGSVoiceType>(originalID);
+		const char* originalEdid = originalVt ? originalVt->GetFormEditorID() : nullptr;
+		const char* currentEdid = currentVt->GetFormEditorID();
+		if (!originalEdid || !*originalEdid || !currentEdid || !*currentEdid) {
 			return;
 		}
 

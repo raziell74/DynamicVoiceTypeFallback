@@ -14,7 +14,7 @@ namespace
 		bool       female{ false };
 	};
 
-	using PublishedMap = std::unordered_map<RE::FormID, RE::BSFixedString>;
+	using PublishedMap = std::unordered_map<RE::FormID, RE::FormID>;
 
 	std::unordered_map<RE::FormID, Pending>        g_pending;
 	std::atomic<std::shared_ptr<const PublishedMap>> g_published;
@@ -50,18 +50,6 @@ namespace
 
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
-
-	[[nodiscard]] const char* EditorIDOf(const RE::BGSVoiceType* a_vt)
-	{
-		if (!a_vt) {
-			return nullptr;
-		}
-		const char* edid = a_vt->GetFormEditorID();
-		if (!edid || !*edid) {
-			return nullptr;
-		}
-		return edid;
-	}
 
 	[[nodiscard]] RE::BGSVoiceType* ResolveOriginalVoice(RE::TESNPC* a_npc, const Pending& a_pending)
 	{
@@ -120,13 +108,18 @@ namespace VoiceMap
 			}
 
 			const auto* vt = ResolveOriginalVoice(npc, it->second);
-			const char* edid = EditorIDOf(vt);
-			if (!edid) {
+			if (!vt) {
 				++skipped;
 				continue;
 			}
 
-			(*built)[npc->GetFormID()] = RE::BSFixedString(edid);
+			const auto vtID = vt->GetFormID();
+			if (!vtID) {
+				++skipped;
+				continue;
+			}
+
+			(*built)[npc->GetFormID()] = vtID;
 		}
 
 		const auto count = built->size();
@@ -134,16 +127,16 @@ namespace VoiceMap
 		g_pending.clear();
 		g_pending.rehash(0);
 
-		SKSE::log::info("Published original VoiceType EditorIDs for {} NPCs ({} skipped)", count, skipped);
+		SKSE::log::info("Published original VoiceType FormIDs for {} NPCs ({} skipped)", count, skipped);
 	}
 
-	RE::BSFixedString OriginalEditorID(RE::FormID a_npcID)
+	RE::FormID OriginalVoiceTypeID(RE::FormID a_npcID)
 	{
 		const auto map = g_published.load(std::memory_order_acquire);
 		if (!map) {
-			return {};
+			return 0;
 		}
 		const auto it = map->find(a_npcID);
-		return it != map->end() ? it->second : RE::BSFixedString{};
+		return it != map->end() ? it->second : 0;
 	}
 }

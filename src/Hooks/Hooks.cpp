@@ -24,7 +24,7 @@ namespace
 		       (a_p[0] == 0xFF && a_p[1] == 0x25);
 	}
 
-	[[nodiscard]] std::size_t ConsumePrologueInsn(const std::uint8_t* a_p)
+	[[nodiscard]] constexpr std::size_t ConsumePrologueInsn(const std::uint8_t* a_p)
 	{
 		const auto b0 = a_p[0];
 		const auto b1 = a_p[1];
@@ -55,6 +55,10 @@ namespace
 		if (b0 == 0x44 && b1 == 0x89 && (b2 & 0xC7) == 0x44 && b3 == 0x24) {
 			return 5;
 		}
+		// mov [reg+disp8], r64 (no SIB): 48 89 48 08 = mov [rax+8], rcx after mov rax, rsp
+		if ((b0 == 0x48 || b0 == 0x4C) && b1 == 0x89 && (b2 & 0xC0) == 0x40 && (b2 & 0x07) != 0x04) {
+			return 4;
+		}
 		if (b0 == 0x48 && b1 == 0x8B && b2 == 0xC4) {
 			return 3;
 		}
@@ -67,11 +71,11 @@ namespace
 		return 0;
 	}
 
-	[[nodiscard]] std::size_t MeasureStolenBytes(std::uintptr_t a_src, std::size_t a_min)
+	[[nodiscard]] constexpr std::size_t MeasureStolenBytes(const std::uint8_t* a_p, std::size_t a_min)
 	{
 		std::size_t stolen = 0;
 		while (stolen < a_min) {
-			const auto len = ConsumePrologueInsn(reinterpret_cast<const std::uint8_t*>(a_src + stolen));
+			const auto len = ConsumePrologueInsn(a_p + stolen);
 			if (len == 0 || stolen + len > 32) {
 				return 0;
 			}
@@ -79,6 +83,17 @@ namespace
 		}
 		return stolen;
 	}
+
+	[[nodiscard]] std::size_t MeasureStolenBytes(std::uintptr_t a_src, std::size_t a_min)
+	{
+		return MeasureStolenBytes(reinterpret_cast<const std::uint8_t*>(a_src), a_min);
+	}
+
+	// AE 1.6.1170 / 1.7.99 DialogueItem::Ctor (SKSE log 2026-09-11)
+	constexpr std::uint8_t kLoggedCtorPrologue[]{ 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x48, 0x08, 0x55 };
+	static_assert(ConsumePrologueInsn(kLoggedCtorPrologue) == 3);
+	static_assert(ConsumePrologueInsn(kLoggedCtorPrologue + 3) == 4);
+	static_assert(MeasureStolenBytes(kLoggedCtorPrologue, 5) == 7);
 
 	struct StolenCave : Xbyak::CodeGenerator
 	{
