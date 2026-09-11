@@ -1,11 +1,4 @@
-**Dynamic Voice Type Fallback** is an SKSE plugin for Skyrim Special Edition. When an NPC's VoiceType changes, the plugin will look up missing voice files in the original VoiceType folder so those lines are not silent.
-
-This repository is currently a CommonLibSSE-NG plugin skeleton. The VoiceType fallback is not implemented yet.
-
-## Planned
-
-- Detect VoiceType changes on NPCs.
-- If a voice file is missing from the new VoiceType, fall back to the original VoiceType folder.
+**Dynamic Voice Type Fallback** is an SKSE plugin for Skyrim Special Edition. When an NPC's VoiceType changes — by ESP override, SkyPatcher, or Papyrus — and a spoken line has no file in the new VoiceType folder, the plugin plays the line from the NPC's original (defining-plugin) VoiceType folder instead of going silent.
 
 ## Requirements
 
@@ -25,6 +18,8 @@ Uninstall using your favorite mod manager or manually delete the files from your
 ## Compatibility
 
 The SKSE plugin is built using [CommonLibSSE NG](https://github.com/alandtse/CommonLibSSE-NG). It targets Skyrim SE and AE. VR is not supported.
+
+Works with ESP VoiceType overrides and ESP-less patchers such as SkyPatcher. Compatible with Fuz Ro D-oh: if the original VoiceType file is also missing, that plugin can still supply silence.
 
 ## Credits
 

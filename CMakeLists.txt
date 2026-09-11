@@ -11,14 +11,16 @@ find_package(CommonLibSSE CONFIG REQUIRED)
 add_commonlibsse_plugin(
     ${PROJECT_NAME}
     NAME "DynamicVoiceTypeFallback"
-    AUTHOR "Jordan"
+    AUTHOR "Raziell74"
     VERSION ${PROJECT_VERSION}
     USE_ADDRESS_LIBRARY
     SOURCES
         src/plugin.cpp
-        src/Hooks/Hooks.cpp)
+        src/Hooks/Hooks.cpp
+        src/VoiceMap/VoiceMap.cpp
+        src/Fallback/VoiceFallback.cpp)
 
-# SKSEPlugin_Version / SKSEPlugin_Query are declared in src/PCH.h as
+# SKSEPlugin_Version / SKSEPlugin_Query are declared in src/plugin.cpp as
 # PluginVersionData so AE 1.7.99 gets AddressLibraryV5. The generated
 # SKSEPluginInfo uses PluginDeclaration, which overwrites that flag.
 set_source_files_properties(
