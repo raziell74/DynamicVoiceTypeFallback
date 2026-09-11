@@ -94,32 +94,43 @@ namespace VoiceMap
 		auto built = std::make_shared<PublishedMap>();
 		built->reserve(g_pending.size());
 
-		std::size_t skipped = 0;
+		std::size_t skippedNull = 0;
+		std::size_t skippedDeleted = 0;
+		std::size_t skippedIgnored = 0;
+		std::size_t skippedDynamic = 0;
+		std::size_t skippedNoLoad = 0;
+		std::size_t skippedNoVoice = 0;
 		for (auto* npc : dh->GetFormArray<RE::TESNPC>()) {
-			if (!npc || npc->IsDeleted() || npc->IsIgnored() || npc->IsDynamicForm()) {
-				++skipped;
+			if (!npc) {
+				++skippedNull;
+				continue;
+			}
+			if (npc->IsDeleted()) {
+				++skippedDeleted;
+				continue;
+			}
+			if (npc->IsIgnored()) {
+				++skippedIgnored;
+				continue;
+			}
+			if (npc->IsDynamicForm()) {
+				++skippedDynamic;
 				continue;
 			}
 
 			const auto it = g_pending.find(npc->GetFormID());
 			if (it == g_pending.end()) {
-				++skipped;
+				++skippedNoLoad;
 				continue;
 			}
 
 			const auto* vt = ResolveOriginalVoice(npc, it->second);
-			if (!vt) {
-				++skipped;
+			if (!vt || !vt->GetFormID()) {
+				++skippedNoVoice;
 				continue;
 			}
 
-			const auto vtID = vt->GetFormID();
-			if (!vtID) {
-				++skipped;
-				continue;
-			}
-
-			(*built)[npc->GetFormID()] = vtID;
+			(*built)[npc->GetFormID()] = vt->GetFormID();
 		}
 
 		const auto count = built->size();
@@ -127,7 +138,15 @@ namespace VoiceMap
 		g_pending.clear();
 		g_pending.rehash(0);
 
-		SKSE::log::info("Published original VoiceType FormIDs for {} NPCs ({} skipped)", count, skipped);
+		SKSE::log::info(
+			"Published original VoiceType FormIDs for {} NPCs (skipped null={} deleted={} ignored={} dynamic={} noLoad={} noVoice={})",
+			count,
+			skippedNull,
+			skippedDeleted,
+			skippedIgnored,
+			skippedDynamic,
+			skippedNoLoad,
+			skippedNoVoice);
 	}
 
 	RE::FormID OriginalVoiceTypeID(RE::FormID a_npcID)
