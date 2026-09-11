@@ -2,6 +2,7 @@
 
 #include "Fallback/VoiceFallback.h"
 #include "Hooks/Hooks.h"
+#include "Log/Format.h"
 #include "VoiceMap/VoiceMap.h"
 
 #include <xbyak/xbyak.h>
@@ -137,10 +138,11 @@ namespace
 		const auto* bytes = reinterpret_cast<const std::uint8_t*>(src);
 		if (AlreadyHooked(bytes)) {
 			SKSE::log::error(
-				"DialogueItem::Ctor entry at {:X} is already patched ({:02X} {:02X}); running unhooked",
-				src,
-				bytes[0],
-				bytes[1]);
+				"{}",
+				Log::Block("DialogueItem::Ctor entry is already patched; running unhooked")
+					.Addr("address", src)
+					.Field("bytes", "{:02X} {:02X}", bytes[0], bytes[1])
+					.Str());
 			return false;
 		}
 
@@ -148,17 +150,21 @@ namespace
 		const auto stolen = MeasureStolenBytes(src, kPatch);
 		if (stolen < kPatch) {
 			SKSE::log::error(
-				"DialogueItem::Ctor prologue at {:X} is not a recognized MSVC sequence "
-				"({:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}); hook not installed",
-				src,
-				bytes[0],
-				bytes[1],
-				bytes[2],
-				bytes[3],
-				bytes[4],
-				bytes[5],
-				bytes[6],
-				bytes[7]);
+				"{}",
+				Log::Block("DialogueItem::Ctor prologue is not a recognized MSVC sequence")
+					.Addr("address", src)
+					.Field(
+						"bytes",
+						"{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+						bytes[0],
+						bytes[1],
+						bytes[2],
+						bytes[3],
+						bytes[4],
+						bytes[5],
+						bytes[6],
+						bytes[7])
+					.Str());
 			return false;
 		}
 
@@ -179,10 +185,12 @@ namespace
 		}
 
 		SKSE::log::info(
-			"DialogueItem::Ctor hook installed at {:X} (stolen {} bytes, trampoline {:X})",
-			src,
-			stolen,
-			original);
+			"{}",
+			Log::Block("DialogueItem::Ctor hook installed")
+				.Addr("address", src)
+				.Field("stolen", "{} bytes", stolen)
+				.Addr("trampoline", original)
+				.Str());
 		return true;
 	}
 }

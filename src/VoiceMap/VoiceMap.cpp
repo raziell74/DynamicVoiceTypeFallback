@@ -1,5 +1,6 @@
 #include "PCH.h"
 
+#include "Log/Format.h"
 #include "VoiceMap/VoiceMap.h"
 
 #include <atomic>
@@ -139,14 +140,16 @@ namespace VoiceMap
 		g_pending.rehash(0);
 
 		SKSE::log::info(
-			"Published original VoiceType FormIDs for {} NPCs (skipped null={} deleted={} ignored={} dynamic={} noLoad={} noVoice={})",
-			count,
-			skippedNull,
-			skippedDeleted,
-			skippedIgnored,
-			skippedDynamic,
-			skippedNoLoad,
-			skippedNoVoice);
+			"{}",
+			Log::Block("Published original VoiceType map")
+				.Field("npcs", count)
+				.Field("null", skippedNull)
+				.Field("deleted", skippedDeleted)
+				.Field("ignored", skippedIgnored)
+				.Field("dynamic", skippedDynamic)
+				.Field("noLoad", skippedNoLoad)
+				.Field("noVoice", skippedNoVoice)
+				.Str());
 	}
 
 	RE::FormID OriginalVoiceTypeID(RE::FormID a_npcID)

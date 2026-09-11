@@ -1,6 +1,7 @@
 #include "PCH.h"
 
 #include "Fallback/VoiceFallback.h"
+#include "Log/Format.h"
 #include "VoiceMap/VoiceMap.h"
 
 #include <algorithm>
@@ -255,6 +256,38 @@ namespace
 		}
 		return a_form->As<RE::BGSVoiceType>();
 	}
+
+	void LogSpeak(
+		std::string_view                 a_action,
+		RE::TESNPC*                      a_npc,
+		RE::TESObjectREFR*               a_speaker,
+		RE::DialogueItem*                a_item,
+		RE::FormID                       a_currentID,
+		const RE::BGSVoiceType*          a_currentVt,
+		RE::FormID                       a_originalID,
+		const RE::BGSVoiceType*          a_originalVt,
+		const char*                      a_voice,
+		const std::optional<std::string>& a_foundCurrent,
+		std::string_view                 a_swapped,
+		const std::optional<std::string>& a_foundFallback,
+		std::string_view                 a_preFuz = {})
+	{
+		SKSE::log::info(
+			"{}",
+			Log::Block(fmt::format("Speak  {}", a_action))
+				.Hex("npc", a_npc->GetFormID(), FormName(a_npc))
+				.Hex("ref", a_speaker->GetFormID())
+				.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0, FormEdid(a_item->topic))
+				.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
+				.Hex("current", a_currentID, FormEdid(a_currentVt))
+				.Hex("original", a_originalID, FormEdid(a_originalVt))
+				.Field("path", Nz(a_voice))
+				.Field("exists", a_foundCurrent ? a_foundCurrent->c_str() : "no")
+				.FieldIf(!a_preFuz.empty(), "preFuz", a_preFuz)
+				.Field("swapped", a_swapped.empty() ? "-" : a_swapped)
+				.Field("fallbackExists", a_foundFallback ? a_foundFallback->c_str() : "no")
+				.Str());
+	}
 }
 
 namespace VoiceFallback
@@ -263,9 +296,11 @@ namespace VoiceFallback
 	{
 		if (!g_loggedFirstCtor.exchange(true, std::memory_order_relaxed)) {
 			SKSE::log::info(
-				"First DialogueItem::Ctor after hook: item={} speaker={}",
-				static_cast<const void*>(a_item),
-				static_cast<const void*>(a_speaker));
+				"{}",
+				Log::Block("First DialogueItem::Ctor after hook")
+					.Field("item", static_cast<const void*>(a_item))
+					.Field("speaker", static_cast<const void*>(a_speaker))
+					.Str());
 		}
 
 		if (!a_item) {
@@ -274,9 +309,12 @@ namespace VoiceFallback
 		}
 
 		if (!a_speaker) {
-			SKSE::log::info("Speak skipped: null speaker (topic={:08X} info={:08X})",
-				a_item->topic ? a_item->topic->GetFormID() : 0,
-				a_item->info ? a_item->info->GetFormID() : 0);
+			SKSE::log::info(
+				"{}",
+				Log::Block("Speak  skip_null_speaker")
+					.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
+					.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
+					.Str());
 			return;
 		}
 
@@ -287,9 +325,11 @@ namespace VoiceFallback
 		auto* npc = SpeakerNPC(a_speaker);
 		if (!npc) {
 			SKSE::log::info(
-				"Speak skipped: speaker {:08X} has no TESNPC base (topic={:08X})",
-				a_speaker->GetFormID(),
-				a_item->topic ? a_item->topic->GetFormID() : 0);
+				"{}",
+				Log::Block("Speak  skip_no_npc")
+					.Hex("ref", a_speaker->GetFormID())
+					.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
+					.Str());
 			return;
 		}
 
@@ -316,6 +356,7 @@ namespace VoiceFallback
 
 			const char* action = "none";
 			std::string swappedPath;
+			std::string preFuz;
 			std::optional<std::string> foundFallback;
 
 			if (!originalID) {
@@ -359,13 +400,9 @@ namespace VoiceFallback
 						const auto questEdid = TruncEdid(quest ? quest->GetFormEditorID() : nullptr, 10);
 						const auto topicEdid = TruncEdid(topic ? topic->GetFormEditorID() : nullptr, 15);
 						const auto infoLocal = VoiceFilenameFormID(voiceInfo);
-						const std::string preFuz = (!plugin.empty() && currentEdid && *currentEdid)
+						preFuz = (!plugin.empty() && currentEdid && *currentEdid)
 							? BuildVoicePath(plugin, currentEdid, questEdid, topicEdid, infoLocal, responseIndex)
 							: std::string{};
-						SKSE::log::info(
-							"Fuz Ro D-oh replaced voice path stub={} preFuz={}",
-							Nz(voice),
-							preFuz.empty() ? "-" : preFuz.c_str());
 						if (!plugin.empty() && originalEdid && *originalEdid) {
 							swappedPath = BuildVoicePath(
 								plugin, originalEdid, questEdid, topicEdid, infoLocal, responseIndex);
@@ -383,41 +420,36 @@ namespace VoiceFallback
 				}
 			}
 
-			SKSE::log::info(
-				"Speak npc={:08X} ({}) ref={:08X} topic={:08X} ({}) info={:08X} "
-				"current={:08X} ({}) original={:08X} ({}) "
-				"path={} exists={} swapped={} fallbackExists={} action={}",
-				npcID,
-				FormName(npc),
-				a_speaker->GetFormID(),
-				a_item->topic ? a_item->topic->GetFormID() : 0,
-				FormEdid(a_item->topic),
-				a_item->info ? a_item->info->GetFormID() : 0,
+			LogSpeak(
+				action,
+				npc,
+				a_speaker,
+				a_item,
 				currentID,
-				FormEdid(currentVt),
+				currentVt,
 				originalID,
-				FormEdid(originalVt),
-				Nz(voice),
-				foundCurrent ? foundCurrent->c_str() : "no",
-				swappedPath.empty() ? "-" : swappedPath.c_str(),
-				foundFallback ? foundFallback->c_str() : "no",
-				action);
+				originalVt,
+				voice,
+				foundCurrent,
+				swappedPath,
+				foundFallback,
+				preFuz);
 		}
 
 		if (!anyResponse) {
-			SKSE::log::info(
-				"Speak npc={:08X} ({}) ref={:08X} topic={:08X} ({}) info={:08X} "
-				"current={:08X} ({}) original={:08X} ({}) path=- exists=no swapped=- fallbackExists=no action=skip_no_responses",
-				npcID,
-				FormName(npc),
-				a_speaker->GetFormID(),
-				a_item->topic ? a_item->topic->GetFormID() : 0,
-				FormEdid(a_item->topic),
-				a_item->info ? a_item->info->GetFormID() : 0,
+			LogSpeak(
+				"skip_no_responses",
+				npc,
+				a_speaker,
+				a_item,
 				currentID,
-				FormEdid(currentVt),
+				currentVt,
 				originalID,
-				FormEdid(originalVt));
+				originalVt,
+				nullptr,
+				std::nullopt,
+				{},
+				std::nullopt);
 		}
 	}
 }
