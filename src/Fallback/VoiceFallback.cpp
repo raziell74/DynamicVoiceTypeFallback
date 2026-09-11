@@ -2,6 +2,7 @@
 
 #include "Fallback/VoiceFallback.h"
 #include "Log/Format.h"
+#include "Settings/Settings.h"
 #include "VoiceMap/VoiceMap.h"
 
 #include <algorithm>
@@ -257,6 +258,32 @@ namespace
 		return a_form->As<RE::BGSVoiceType>();
 	}
 
+	[[nodiscard]] bool ShouldLogSpeak(std::string_view a_action, bool a_fuz)
+	{
+		const auto& cfg = Settings::Get();
+		if (!cfg.speak) {
+			return false;
+		}
+
+		const bool replaced = a_action == "fallback" || a_action == "fallback_recon";
+		const bool fuz = a_fuz || a_action == "fallback_recon" || a_action.starts_with("skip_recon_");
+		const bool unchanged = a_action == "skip_same_voicetype" || a_action == "skip_current_exists";
+
+		if (cfg.onlyWhenReplaced) {
+			return replaced || (cfg.fuzRoDoh && fuz);
+		}
+		if (replaced) {
+			return true;
+		}
+		if (fuz && cfg.fuzRoDoh) {
+			return true;
+		}
+		if (unchanged) {
+			return cfg.unchanged;
+		}
+		return cfg.misses;
+	}
+
 	void LogSpeak(
 		std::string_view                 a_action,
 		RE::TESNPC*                      a_npc,
@@ -272,7 +299,12 @@ namespace
 		const std::optional<std::string>& a_foundFallback,
 		std::string_view                 a_preFuz = {})
 	{
-		SKSE::log::info(
+		const bool fuz = !a_preFuz.empty() || IsFuzStubPath(Nz(a_voice));
+		if (!ShouldLogSpeak(a_action, fuz)) {
+			return;
+		}
+
+		SKSE::log::debug(
 			"{}",
 			Log::Block(fmt::format("Speak  {}", a_action))
 				.Hex("npc", a_npc->GetFormID(), FormName(a_npc))
@@ -283,7 +315,7 @@ namespace
 				.Hex("original", a_originalID, FormEdid(a_originalVt))
 				.Field("path", Nz(a_voice))
 				.Field("exists", a_foundCurrent ? a_foundCurrent->c_str() : "no")
-				.FieldIf(!a_preFuz.empty(), "preFuz", a_preFuz)
+				.FieldIf(Settings::Get().fuzRoDoh && !a_preFuz.empty(), "preFuz", a_preFuz)
 				.Field("swapped", a_swapped.empty() ? "-" : a_swapped)
 				.Field("fallbackExists", a_foundFallback ? a_foundFallback->c_str() : "no")
 				.Str());
@@ -295,7 +327,7 @@ namespace VoiceFallback
 	void Apply(RE::DialogueItem* a_item, RE::TESObjectREFR* a_speaker)
 	{
 		if (!g_loggedFirstCtor.exchange(true, std::memory_order_relaxed)) {
-			SKSE::log::info(
+			SKSE::log::debug(
 				"{}",
 				Log::Block("First DialogueItem::Ctor after hook")
 					.Field("item", static_cast<const void*>(a_item))
@@ -309,12 +341,14 @@ namespace VoiceFallback
 		}
 
 		if (!a_speaker) {
-			SKSE::log::info(
-				"{}",
-				Log::Block("Speak  skip_null_speaker")
-					.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
-					.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
-					.Str());
+			if (ShouldLogSpeak("skip_null_speaker", false)) {
+				SKSE::log::debug(
+					"{}",
+					Log::Block("Speak  skip_null_speaker")
+						.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
+						.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
+						.Str());
+			}
 			return;
 		}
 
@@ -324,12 +358,14 @@ namespace VoiceFallback
 
 		auto* npc = SpeakerNPC(a_speaker);
 		if (!npc) {
-			SKSE::log::info(
-				"{}",
-				Log::Block("Speak  skip_no_npc")
-					.Hex("ref", a_speaker->GetFormID())
-					.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
-					.Str());
+			if (ShouldLogSpeak("skip_no_npc", false)) {
+				SKSE::log::debug(
+					"{}",
+					Log::Block("Speak  skip_no_npc")
+						.Hex("ref", a_speaker->GetFormID())
+						.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
+						.Str());
+			}
 			return;
 		}
 

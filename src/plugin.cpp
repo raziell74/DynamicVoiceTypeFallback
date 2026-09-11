@@ -1,6 +1,7 @@
 #include "PCH.h"
 
 #include "Hooks/Hooks.h"
+#include "Settings/Settings.h"
 
 SKSE_EXPORT constinit SKSE::PluginVersionData SKSEPlugin_Version = []() noexcept {
 	SKSE::PluginVersionData v;
@@ -32,6 +33,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	// constructor zeros _base — later ID lookups jump to a raw offset (crash).
 	REL::Module::reset();
 	SKSE::Init(a_skse);
+	Settings::Load();
 
 	const auto* plugin = SKSE::PluginVersionData::GetSingleton();
 	SKSE::log::info("{} v{} loaded", plugin->GetPluginName(), plugin->GetPluginVersion().string());

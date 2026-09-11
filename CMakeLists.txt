@@ -18,7 +18,8 @@ add_commonlibsse_plugin(
         src/plugin.cpp
         src/Hooks/Hooks.cpp
         src/VoiceMap/VoiceMap.cpp
-        src/Fallback/VoiceFallback.cpp)
+        src/Fallback/VoiceFallback.cpp
+        src/Settings/Settings.cpp)
 
 # SKSEPlugin_Version / SKSEPlugin_Query are declared in src/plugin.cpp as
 # PluginVersionData so AE 1.7.99 gets AddressLibraryV5. The generated
@@ -46,6 +47,9 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "$<TARGET_FILE:${PROJECT_NAME}>"
         "${DLL_FOLDER}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/DynamicVoiceTypeFallback.ini"
+        "${DLL_FOLDER}/DynamicVoiceTypeFallback.ini"
     VERBATIM
 )
 

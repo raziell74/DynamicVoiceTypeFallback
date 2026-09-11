@@ -11,6 +11,8 @@ Install using your favorite mod manager or manually extract the contents of the 
 
 Load order doesn't matter. There is no plugin file.
 
+Logging is controlled from `SKSE/Plugins/DynamicVoiceTypeFallback.ini`. `Level=info` prints load and hook status. Set `Level=debug` to see per-line Speak blocks, then use `Speak`, `OnlyWhenReplaced`, `FuzRoDoh`, `Misses`, and `Unchanged` to choose which decisions appear.
+
 ## Uninstallation
 
 Uninstall using your favorite mod manager or manually delete the files from your Skyrim Special Edition Data folder.
