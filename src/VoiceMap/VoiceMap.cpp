@@ -19,6 +19,19 @@ namespace
 	std::unordered_map<RE::FormID, Pending>        g_pending;
 	std::atomic<std::shared_ptr<const PublishedMap>> g_published;
 
+	[[nodiscard]] RE::FormID UnresolvedOrLiveFormID(const RE::TESForm* a_form)
+	{
+		const auto raw = reinterpret_cast<std::uintptr_t>(a_form);
+		if (raw == 0) {
+			return 0;
+		}
+		// TESNPC::Load writes VTCK as a packed FormID in the pointer slot until InitItem.
+		if (raw <= 0xFFFFFFFFu) {
+			return static_cast<RE::FormID>(raw);
+		}
+		return a_form->GetFormID();
+	}
+
 	struct TESNPCLoadHook
 	{
 		static bool thunk(RE::TESNPC* a_this, RE::TESFile* a_file)
@@ -26,10 +39,9 @@ namespace
 			const auto id = a_this->GetFormID();
 			const bool first = !g_pending.contains(id);
 			const bool ok = func(a_this, a_file);
-			if (first) {
-				const auto* vt = a_this->voiceType;
+			if (first && ok) {
 				g_pending[id] = Pending{
-					.voiceTypeID = vt ? vt->GetFormID() : 0,
+					.voiceTypeID = UnresolvedOrLiveFormID(a_this->voiceType),
 					.female = a_this->IsFemale()
 				};
 			}
