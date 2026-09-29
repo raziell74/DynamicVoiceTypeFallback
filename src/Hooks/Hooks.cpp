@@ -193,6 +193,151 @@ namespace
 				.Str());
 		return true;
 	}
+
+	// Dialogue Menu responses are built here, not by DialogueItem::Ctor.
+	// SE 34429 / AE 35249. ConstructResponse is the call at +0xDE (SE and AE 1.6).
+	thread_local RE::TESObjectREFR* g_menuSpeaker{ nullptr };
+
+	struct MenuSpeakerGuard
+	{
+		RE::TESObjectREFR* previous;
+
+		explicit MenuSpeakerGuard(RE::TESObjectREFR* a_speaker) :
+			previous(g_menuSpeaker)
+		{
+			g_menuSpeaker = a_speaker;
+		}
+
+		~MenuSpeakerGuard() { g_menuSpeaker = previous; }
+	};
+
+	struct ConstructResponseHook
+	{
+		static bool thunk(
+			RE::TESTopicInfo::TESResponse* a_response,
+			char*                          a_filePath,
+			RE::BGSVoiceType*              a_voiceType,
+			RE::TESTopic*                  a_topic,
+			RE::TESTopicInfo*              a_topicInfo)
+		{
+			const auto ok = func(a_response, a_filePath, a_voiceType, a_topic, a_topicInfo);
+			if (ok && a_filePath) {
+				constexpr std::size_t kPathCapacity = 0x104;
+				VoiceFallback::ApplyBuffer(
+					a_filePath,
+					kPathCapacity,
+					g_menuSpeaker,
+					a_topic,
+					a_topicInfo,
+					a_response);
+			}
+			return ok;
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct PopulateTopicInfoHook
+	{
+		static std::int64_t thunk(
+			std::int64_t                       a_unk,
+			RE::TESTopic*                      a_topic,
+			RE::TESTopicInfo*                  a_topicInfo,
+			RE::Character*                     a_speaker,
+			RE::TESTopicInfo::TESResponse*     a_response)
+		{
+			MenuSpeakerGuard guard(a_speaker);
+			return func(a_unk, a_topic, a_topicInfo, a_speaker, a_response);
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	bool InstallPopulateTopicInfoHook()
+	{
+		REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(34429, 35249) };
+		const auto src = target.address();
+		SKSE::log::info("PopulateTopicInfo relocated to {:X}", src);
+		if (!src) {
+			SKSE::log::error("PopulateTopicInfo relocated to 0");
+			return false;
+		}
+
+		const auto* bytes = reinterpret_cast<const std::uint8_t*>(src);
+		if (AlreadyHooked(bytes)) {
+			SKSE::log::error(
+				"{}",
+				Log::Block("PopulateTopicInfo entry is already patched; Dialogue Menu fallback left off")
+					.Addr("address", src)
+					.Field("bytes", "{:02X} {:02X}", bytes[0], bytes[1])
+					.Str());
+			return false;
+		}
+
+		const auto callOffset = REL::Relocate(0xDE, 0xDE);
+		const auto callSite = src + callOffset;
+		const auto callByte = *reinterpret_cast<const std::uint8_t*>(callSite);
+		if (callByte != 0xE8) {
+			SKSE::log::error(
+				"{}",
+				Log::Block("PopulateTopicInfo ConstructResponse call site is not a call; Dialogue Menu fallback left off")
+					.Addr("address", callSite)
+					.Field("offset", "{:X}", callOffset)
+					.Field("byte", "{:02X}", callByte)
+					.Str());
+			return false;
+		}
+
+		constexpr std::size_t kPatch = 5;
+		const auto stolen = MeasureStolenBytes(src, kPatch);
+		if (stolen < kPatch) {
+			SKSE::log::error(
+				"{}",
+				Log::Block("PopulateTopicInfo prologue is not a recognized MSVC sequence")
+					.Addr("address", src)
+					.Field(
+						"bytes",
+						"{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+						bytes[0],
+						bytes[1],
+						bytes[2],
+						bytes[3],
+						bytes[4],
+						bytes[5],
+						bytes[6],
+						bytes[7])
+					.Str());
+			return false;
+		}
+
+		StolenCave cave(bytes, stolen, src + stolen);
+		cave.ready();
+
+		auto& trampoline = SKSE::GetTrampoline();
+		const auto original = reinterpret_cast<std::uintptr_t>(trampoline.allocate(cave));
+		if (!original) {
+			SKSE::log::error("Failed to allocate PopulateTopicInfo trampoline");
+			return false;
+		}
+		PopulateTopicInfoHook::func = original;
+
+		trampoline.write_branch<5>(src, PopulateTopicInfoHook::thunk);
+		if (stolen > kPatch) {
+			REL::safe_fill(src + kPatch, REL::NOP, stolen - kPatch);
+		}
+
+		ConstructResponseHook::func = trampoline.write_call<5>(callSite, ConstructResponseHook::thunk);
+
+		SKSE::log::info(
+			"{}",
+			Log::Block("PopulateTopicInfo hook installed")
+				.Addr("address", src)
+				.Field("stolen", "{} bytes", stolen)
+				.Addr("trampoline", original)
+				.Addr("constructResponse", callSite)
+				.Str());
+		return true;
+	}
 }
 
 namespace Hooks
@@ -216,6 +361,10 @@ namespace Hooks
 
 		if (!InstallDialogueItemCtorHook()) {
 			SKSE::log::error("DialogueItem::Ctor hook not installed; plugin will run unhooked");
+		}
+
+		if (!InstallPopulateTopicInfoHook()) {
+			SKSE::log::error("PopulateTopicInfo hook not installed; Dialogue Menu voice fallback will not run");
 		}
 
 		return true;

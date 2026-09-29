@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -285,19 +286,21 @@ namespace
 	}
 
 	void LogSpeak(
-		std::string_view                 a_action,
-		RE::TESNPC*                      a_npc,
-		RE::TESObjectREFR*               a_speaker,
-		RE::DialogueItem*                a_item,
-		RE::FormID                       a_currentID,
-		const RE::BGSVoiceType*          a_currentVt,
-		RE::FormID                       a_originalID,
-		const RE::BGSVoiceType*          a_originalVt,
-		const char*                      a_voice,
+		std::string_view                  a_action,
+		RE::TESNPC*                       a_npc,
+		RE::TESObjectREFR*                a_speaker,
+		RE::TESTopic*                     a_topic,
+		RE::TESTopicInfo*                 a_info,
+		RE::FormID                        a_currentID,
+		const RE::BGSVoiceType*           a_currentVt,
+		RE::FormID                        a_originalID,
+		const RE::BGSVoiceType*           a_originalVt,
+		const char*                       a_voice,
 		const std::optional<std::string>& a_foundCurrent,
-		std::string_view                 a_swapped,
+		std::string_view                  a_swapped,
 		const std::optional<std::string>& a_foundFallback,
-		std::string_view                 a_preFuz = {})
+		std::string_view                  a_via,
+		std::string_view                  a_preFuz = {})
 	{
 		const bool fuz = !a_preFuz.empty() || IsFuzStubPath(Nz(a_voice));
 		if (!ShouldLogSpeak(a_action, fuz)) {
@@ -309,8 +312,9 @@ namespace
 			Log::Block(fmt::format("Speak  {}", a_action))
 				.Hex("npc", a_npc->GetFormID(), FormName(a_npc))
 				.Hex("ref", a_speaker->GetFormID())
-				.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0, FormEdid(a_item->topic))
-				.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
+				.Hex("topic", a_topic ? a_topic->GetFormID() : 0, FormEdid(a_topic))
+				.Hex("info", a_info ? a_info->GetFormID() : 0)
+				.Field("via", a_via)
 				.Hex("current", a_currentID, FormEdid(a_currentVt))
 				.Hex("original", a_originalID, FormEdid(a_originalVt))
 				.Field("path", Nz(a_voice))
@@ -319,6 +323,172 @@ namespace
 				.Field("swapped", a_swapped.empty() ? "-" : a_swapped)
 				.Field("fallbackExists", a_foundFallback ? a_foundFallback->c_str() : "no")
 				.Str());
+	}
+
+	struct SpeakerVoice
+	{
+		RE::TESNPC*             npc{ nullptr };
+		const RE::BGSVoiceType* current{ nullptr };
+		const RE::BGSVoiceType* original{ nullptr };
+		RE::FormID              currentID{ 0 };
+		RE::FormID              originalID{ 0 };
+	};
+
+	enum class BindResult
+	{
+		ok,
+		nullSpeaker,
+		player,
+		noNpc
+	};
+
+	[[nodiscard]] BindResult BindSpeaker(
+		RE::TESObjectREFR* a_speaker,
+		RE::TESTopic*      a_topic,
+		RE::TESTopicInfo*  a_info,
+		std::string_view   a_via,
+		SpeakerVoice&      a_out)
+	{
+		if (!a_speaker) {
+			if (ShouldLogSpeak("skip_null_speaker", false)) {
+				SKSE::log::debug(
+					"{}",
+					Log::Block("Speak  skip_null_speaker")
+						.Hex("topic", a_topic ? a_topic->GetFormID() : 0)
+						.Hex("info", a_info ? a_info->GetFormID() : 0)
+						.Field("via", a_via)
+						.Str());
+			}
+			return BindResult::nullSpeaker;
+		}
+
+		if (a_speaker->IsPlayerRef()) {
+			return BindResult::player;
+		}
+
+		a_out.npc = SpeakerNPC(a_speaker);
+		if (!a_out.npc) {
+			if (ShouldLogSpeak("skip_no_npc", false)) {
+				SKSE::log::debug(
+					"{}",
+					Log::Block("Speak  skip_no_npc")
+						.Hex("ref", a_speaker->GetFormID())
+						.Hex("topic", a_topic ? a_topic->GetFormID() : 0)
+						.Field("via", a_via)
+						.Str());
+			}
+			return BindResult::noNpc;
+		}
+
+		a_out.originalID = VoiceMap::OriginalVoiceTypeID(a_out.npc->GetFormID());
+		a_out.current = LiveVoiceType(a_out.npc->voiceType);
+		if (!a_out.current) {
+			a_out.current = LiveVoiceType(a_out.npc->GetObjectVoiceType());
+		}
+		a_out.original = a_out.originalID ? RE::TESForm::LookupByID<RE::BGSVoiceType>(a_out.originalID) : nullptr;
+		a_out.currentID = a_out.current ? a_out.current->GetFormID() : 0;
+		return BindResult::ok;
+	}
+
+	// Path that should replace a_voice, when the current VoiceType file is missing.
+	[[nodiscard]] std::optional<std::string> ConsiderResponse(
+		const SpeakerVoice& a_voice,
+		RE::TESObjectREFR*  a_speaker,
+		RE::TESTopic*       a_topic,
+		RE::TESTopicInfo*   a_info,
+		RE::TESQuest*       a_quest,
+		const char*         a_voicePath,
+		bool                a_hasVoiceSound,
+		int                 a_responseIndex,
+		std::string_view    a_via)
+	{
+		const auto foundCurrent = (a_voicePath && *a_voicePath) ? FindVoiceAsset(a_voicePath) : std::nullopt;
+
+		const char* action = "none";
+		std::string swappedPath;
+		std::string preFuz;
+		std::optional<std::string> foundFallback;
+
+		if (!a_voice.originalID) {
+			action = "skip_no_original";
+		} else if (!a_voice.current) {
+			action = "skip_no_current";
+		} else if (a_voice.currentID == a_voice.originalID) {
+			action = "skip_same_voicetype";
+		} else if (a_hasVoiceSound) {
+			action = "skip_sndd";
+		} else if (!a_voicePath || !*a_voicePath) {
+			action = "skip_empty_path";
+		} else if (foundCurrent) {
+			action = "skip_current_exists";
+		} else {
+			const char* currentEdid = a_voice.current->GetFormEditorID();
+			const char* originalEdid = a_voice.original ? a_voice.original->GetFormEditorID() : nullptr;
+			if (!currentEdid || !*currentEdid || !originalEdid || !*originalEdid) {
+				action = "skip_missing_edid";
+			} else if (auto swapped = ReplaceFolder(a_voicePath, currentEdid, originalEdid)) {
+				swappedPath = std::move(*swapped);
+				foundFallback = FindVoiceAsset(swappedPath);
+				if (foundFallback) {
+					action = "fallback";
+				} else {
+					action = "skip_fallback_missing";
+				}
+			} else {
+				action = "skip_no_folder_match";
+				if (IsFuzStubPath(a_voicePath)) {
+					auto* voiceInfo = (a_info && a_info->dataInfo) ? a_info->dataInfo : a_info;
+					auto* topic = voiceInfo && voiceInfo->parentTopic ? voiceInfo->parentTopic : a_topic;
+					auto* quest = a_quest;
+					if (!quest && topic) {
+						quest = topic->ownerQuest;
+					}
+					const auto* file = voiceInfo ? voiceInfo->GetFile() : nullptr;
+					const std::string plugin = file ? std::string(file->GetFilename()) : std::string{};
+					const auto questEdid = TruncEdid(quest ? quest->GetFormEditorID() : nullptr, 10);
+					const auto topicEdid = TruncEdid(topic ? topic->GetFormEditorID() : nullptr, 15);
+					const auto infoLocal = VoiceFilenameFormID(voiceInfo);
+					preFuz = (!plugin.empty() && currentEdid && *currentEdid)
+						? BuildVoicePath(plugin, currentEdid, questEdid, topicEdid, infoLocal, a_responseIndex)
+						: std::string{};
+					if (!plugin.empty() && originalEdid && *originalEdid) {
+						swappedPath = BuildVoicePath(
+							plugin, originalEdid, questEdid, topicEdid, infoLocal, a_responseIndex);
+						if (auto foundRecon = FindVoiceAsset(swappedPath)) {
+							foundFallback = std::move(foundRecon);
+							action = "fallback_recon";
+						} else {
+							action = "skip_recon_missing";
+						}
+					} else {
+						action = "skip_recon_incomplete";
+					}
+				}
+			}
+		}
+
+		LogSpeak(
+			action,
+			a_voice.npc,
+			a_speaker,
+			a_topic,
+			a_info,
+			a_voice.currentID,
+			a_voice.current,
+			a_voice.originalID,
+			a_voice.original,
+			a_voicePath,
+			foundCurrent,
+			swappedPath,
+			foundFallback,
+			a_via,
+			preFuz);
+
+		const std::string_view decision{ action };
+		if ((decision == "fallback" || decision == "fallback_recon") && foundFallback) {
+			return foundFallback;
+		}
+		return std::nullopt;
 	}
 }
 
@@ -340,43 +510,10 @@ namespace VoiceFallback
 			return;
 		}
 
-		if (!a_speaker) {
-			if (ShouldLogSpeak("skip_null_speaker", false)) {
-				SKSE::log::debug(
-					"{}",
-					Log::Block("Speak  skip_null_speaker")
-						.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
-						.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
-						.Str());
-			}
+		SpeakerVoice voice;
+		if (BindSpeaker(a_speaker, a_item->topic, a_item->info, "dialogue", voice) != BindResult::ok) {
 			return;
 		}
-
-		if (a_speaker->IsPlayerRef()) {
-			return;
-		}
-
-		auto* npc = SpeakerNPC(a_speaker);
-		if (!npc) {
-			if (ShouldLogSpeak("skip_no_npc", false)) {
-				SKSE::log::debug(
-					"{}",
-					Log::Block("Speak  skip_no_npc")
-						.Hex("ref", a_speaker->GetFormID())
-						.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0)
-						.Str());
-			}
-			return;
-		}
-
-		const auto npcID = npc->GetFormID();
-		const auto originalID = VoiceMap::OriginalVoiceTypeID(npcID);
-		const auto* currentVt = LiveVoiceType(npc->voiceType);
-		if (!currentVt) {
-			currentVt = LiveVoiceType(npc->GetObjectVoiceType());
-		}
-		const auto* originalVt = originalID ? RE::TESForm::LookupByID<RE::BGSVoiceType>(originalID) : nullptr;
-		const auto currentID = currentVt ? currentVt->GetFormID() : 0;
 
 		bool anyResponse = false;
 		int responseIndex = 0;
@@ -387,105 +524,118 @@ namespace VoiceFallback
 			anyResponse = true;
 			++responseIndex;
 
-			const char* voice = response->voice.c_str();
-			const auto foundCurrent = (voice && *voice) ? FindVoiceAsset(voice) : std::nullopt;
-
-			const char* action = "none";
-			std::string swappedPath;
-			std::string preFuz;
-			std::optional<std::string> foundFallback;
-
-			if (!originalID) {
-				action = "skip_no_original";
-			} else if (!currentVt) {
-				action = "skip_no_current";
-			} else if (currentID == originalID) {
-				action = "skip_same_voicetype";
-			} else if (response->voiceSound) {
-				action = "skip_sndd";
-			} else if (!voice || !*voice) {
-				action = "skip_empty_path";
-			} else if (foundCurrent) {
-				action = "skip_current_exists";
-			} else {
-				const char* currentEdid = currentVt->GetFormEditorID();
-				const char* originalEdid = originalVt ? originalVt->GetFormEditorID() : nullptr;
-				if (!currentEdid || !*currentEdid || !originalEdid || !*originalEdid) {
-					action = "skip_missing_edid";
-				} else if (auto swapped = ReplaceFolder(voice, currentEdid, originalEdid)) {
-					swappedPath = std::move(*swapped);
-					foundFallback = FindVoiceAsset(swappedPath);
-					if (foundFallback) {
-						response->voice = RE::BSFixedString(foundFallback->c_str());
-						action = "fallback";
-					} else {
-						action = "skip_fallback_missing";
-					}
-				} else {
-					action = "skip_no_folder_match";
-					if (IsFuzStubPath(voice)) {
-						auto* info = a_item->info;
-						auto* voiceInfo = (info && info->dataInfo) ? info->dataInfo : info;
-						auto* topic = voiceInfo && voiceInfo->parentTopic ? voiceInfo->parentTopic : a_item->topic;
-						auto* quest = a_item->quest;
-						if (!quest && topic) {
-							quest = topic->ownerQuest;
-						}
-						const auto* file = voiceInfo ? voiceInfo->GetFile() : nullptr;
-						const std::string plugin = file ? std::string(file->GetFilename()) : std::string{};
-						const auto questEdid = TruncEdid(quest ? quest->GetFormEditorID() : nullptr, 10);
-						const auto topicEdid = TruncEdid(topic ? topic->GetFormEditorID() : nullptr, 15);
-						const auto infoLocal = VoiceFilenameFormID(voiceInfo);
-						preFuz = (!plugin.empty() && currentEdid && *currentEdid)
-							? BuildVoicePath(plugin, currentEdid, questEdid, topicEdid, infoLocal, responseIndex)
-							: std::string{};
-						if (!plugin.empty() && originalEdid && *originalEdid) {
-							swappedPath = BuildVoicePath(
-								plugin, originalEdid, questEdid, topicEdid, infoLocal, responseIndex);
-							if (auto foundRecon = FindVoiceAsset(swappedPath)) {
-								foundFallback = std::move(foundRecon);
-								response->voice = RE::BSFixedString(foundFallback->c_str());
-								action = "fallback_recon";
-							} else {
-								action = "skip_recon_missing";
-							}
-						} else {
-							action = "skip_recon_incomplete";
-						}
-					}
+			if (auto replaced = ConsiderResponse(
+					voice,
+					a_speaker,
+					a_item->topic,
+					a_item->info,
+					a_item->quest,
+					response->voice.c_str(),
+					response->voiceSound != nullptr,
+					responseIndex,
+					"dialogue")) {
+				const std::string previous{ response->voice.c_str() ? response->voice.c_str() : "" };
+				response->voice = RE::BSFixedString(replaced->c_str());
+				if (ShouldLogSpeak("fallback", false)) {
+					SKSE::log::debug(
+						"{}",
+						Log::Block("Speak  dialogue_write")
+							.Hex("ref", a_speaker->GetFormID())
+							.Hex("topic", a_item->topic ? a_item->topic->GetFormID() : 0, FormEdid(a_item->topic))
+							.Hex("info", a_item->info ? a_item->info->GetFormID() : 0)
+							.Field("response", "{}", responseIndex)
+							.Field("from", previous)
+							.Field("to", *replaced)
+							.Str());
 				}
 			}
-
-			LogSpeak(
-				action,
-				npc,
-				a_speaker,
-				a_item,
-				currentID,
-				currentVt,
-				originalID,
-				originalVt,
-				voice,
-				foundCurrent,
-				swappedPath,
-				foundFallback,
-				preFuz);
 		}
 
 		if (!anyResponse) {
 			LogSpeak(
 				"skip_no_responses",
-				npc,
+				voice.npc,
 				a_speaker,
-				a_item,
-				currentID,
-				currentVt,
-				originalID,
-				originalVt,
+				a_item->topic,
+				a_item->info,
+				voice.currentID,
+				voice.current,
+				voice.originalID,
+				voice.original,
 				nullptr,
 				std::nullopt,
 				{},
-				std::nullopt);
+				std::nullopt,
+				"dialogue");
+		}
+	}
+
+	void ApplyBuffer(
+		char*                                a_filePath,
+		std::size_t                          a_capacity,
+		RE::TESObjectREFR*                   a_speaker,
+		RE::TESTopic*                        a_topic,
+		RE::TESTopicInfo*                    a_info,
+		const RE::TESTopicInfo::TESResponse* a_response)
+	{
+		if (!a_filePath || a_capacity == 0) {
+			if (ShouldLogSpeak("skip_empty_path", false)) {
+				SKSE::log::debug(
+					"{}",
+					Log::Block("Speak  skip_empty_path")
+						.Hex("topic", a_topic ? a_topic->GetFormID() : 0, FormEdid(a_topic))
+						.Hex("info", a_info ? a_info->GetFormID() : 0)
+						.Field("via", "menu")
+						.Str());
+			}
+			return;
+		}
+
+		SpeakerVoice voice;
+		if (BindSpeaker(a_speaker, a_topic, a_info, "menu", voice) != BindResult::ok) {
+			return;
+		}
+
+		const int responseIndex = a_response ? static_cast<int>(a_response->responseNumber) : 0;
+		const bool hasSound = a_response && a_response->sound != nullptr;
+		const std::string previous{ a_filePath };
+		auto replaced = ConsiderResponse(
+			voice,
+			a_speaker,
+			a_topic,
+			a_info,
+			nullptr,
+			a_filePath,
+			hasSound,
+			responseIndex,
+			"menu");
+		if (!replaced) {
+			return;
+		}
+		if (replaced->size() >= a_capacity) {
+			SKSE::log::warn(
+				"{}",
+				Log::Block("Speak  skip_menu_path_too_long")
+					.Hex("topic", a_topic ? a_topic->GetFormID() : 0, FormEdid(a_topic))
+					.Hex("info", a_info ? a_info->GetFormID() : 0)
+					.Field("from", previous)
+					.Field("to", *replaced)
+					.Field("capacity", "{}", a_capacity)
+					.Str());
+			return;
+		}
+		std::memcpy(a_filePath, replaced->c_str(), replaced->size() + 1);
+		if (ShouldLogSpeak("fallback", false)) {
+			SKSE::log::debug(
+				"{}",
+				Log::Block("Speak  menu_write")
+					.Hex("ref", a_speaker->GetFormID())
+					.Hex("topic", a_topic ? a_topic->GetFormID() : 0, FormEdid(a_topic))
+					.Hex("info", a_info ? a_info->GetFormID() : 0)
+					.Field("response", "{}", responseIndex)
+					.Field("from", previous)
+					.Field("to", *replaced)
+					.Str());
 		}
 	}
 }

@@ -39,7 +39,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	SKSE::log::info("{} v{} loaded", plugin->GetPluginName(), plugin->GetPluginVersion().string());
 
 	if (!REL::Module::IsVR()) {
-		SKSE::AllocTrampoline(128);
+		SKSE::AllocTrampoline(256);
 	}
 
 	return Hooks::Register();
